@@ -1,0 +1,15 @@
+pymupdf
+fastapi
+uvicorn
+chromadb
+sentence-transformers
+networkx
+python-dotenv
+rank-bm25
+requests
+python-multipart
+httpx
+pytest
+pytest-asyncio
+groq
+tiktoken
