@@ -29,6 +29,7 @@ backend/venv/
 # ===========================
 chroma_db/
 knowledge_graph.json
+backend/data/
 
 # ===========================
 # Uploaded / Processed PDFs

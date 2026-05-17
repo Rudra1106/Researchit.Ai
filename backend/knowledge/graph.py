@@ -342,7 +342,32 @@ class KnowledgeGraph:
             "concepts": self.get_all_concepts()[:20],  # first 20 only
         }
 
-    # ── Persistence ────────────────────────────────────────────────────────────
+    def get_prerequisites(self, concept: str) -> list:
+        """
+        Return concepts that are prerequisites for `concept` via REQUIRES edges.
+        These are concepts where an edge with relation='requires' points TO concept,
+        or outgoing edges from concept labelled 'requires'.
+
+        Used by prerequisite_engine.py to supplement the static DL map.
+        """
+        node = self.find_node(concept)
+        if node is None:
+            return []
+
+        prereqs = []
+        # Incoming edges: X requires concept (concept needs X first)
+        for subj, _, data in self._graph.in_edges(node, data=True):
+            if data.get("relation", "").lower() in ("requires", "needs", "depends on"):
+                subj_display = self._graph.nodes[subj].get("display", subj)
+                prereqs.append(subj_display)
+        # Outgoing: concept requires X
+        for _, obj, data in self._graph.out_edges(node, data=True):
+            if data.get("relation", "").lower() in ("requires", "needs", "depends on"):
+                obj_display = self._graph.nodes[obj].get("display", obj)
+                prereqs.append(obj_display)
+        return prereqs
+
+
 
     def save(self, path=None):
         """

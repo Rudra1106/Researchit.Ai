@@ -49,6 +49,14 @@ class SessionStore:
             "paper_filename": paper_filename,
             "created_at":     datetime.utcnow().isoformat(),
             "turn_count":     0,
+            "learner_profile": {
+                "level":               "beginner",
+                "known_concepts":      [],
+                "preferred_style":     "analogy",
+                "taught_this_session": [],
+                "profiled":            False,
+            },
+            "reading_path":   [],
         }
         return session_id
 
@@ -103,3 +111,38 @@ class SessionStore:
     def list_sessions(self):
         """Return all active session IDs — useful for debugging."""
         return list(self._sessions.keys())
+
+    # ── Learner profile ─────────────────────────────────────────────────────────
+
+    def get_profile(self, session_id: str) -> dict:
+        """Return the learner profile for a session."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return {}
+        return session.get("learner_profile", {})
+
+    def update_profile(self, session_id: str, profile: dict):
+        """Replace the learner profile with a freshly inferred one."""
+        if self.session_exists(session_id):
+            # Preserve taught_this_session across profile updates
+            existing = self._sessions[session_id].get("learner_profile", {})
+            profile.setdefault("taught_this_session", existing.get("taught_this_session", []))
+            self._sessions[session_id]["learner_profile"] = profile
+
+    def mark_concept_taught(self, session_id: str, concept: str):
+        """Record that a concept was taught this session."""
+        if not self.session_exists(session_id):
+            return
+        profile = self._sessions[session_id].setdefault("learner_profile", {})
+        taught  = profile.setdefault("taught_this_session", [])
+        if concept not in taught:
+            taught.append(concept)
+
+    def set_reading_path(self, session_id: str, path: list):
+        """Store the adaptive reading path generated at upload time."""
+        if self.session_exists(session_id):
+            self._sessions[session_id]["reading_path"] = path
+
+    def get_reading_path(self, session_id: str) -> list:
+        session = self._sessions.get(session_id)
+        return session.get("reading_path", []) if session else []
