@@ -254,7 +254,8 @@ defaults = {
     "backend_url":         os.getenv("BACKEND_URL", "http://localhost:8000"),
     "health":              None,
     "learner_profile":     {"level": "unknown", "taught": []},
-    "prerequisites_cache": {},   # msg_index -> list of prereqs taught
+    "prerequisites_cache": {},
+    "mentor_state":        {"active": False},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -339,6 +340,7 @@ def clear_session():
     st.session_state.messages        = []
     st.session_state.paper_info      = None
     st.session_state.learner_profile = {"level": "unknown", "taught": []}
+    st.session_state.mentor_state    = {"active": False}
 
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
@@ -381,7 +383,7 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Learner profile ─────────────────────────────────────────────────────────
+    # ── Learner profile badge ───────────────────────────────────────────────────
     profile = st.session_state.learner_profile
     level   = profile.get("level", "unknown")
     taught  = profile.get("taught", [])
@@ -393,8 +395,45 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
         if taught:
-            st.caption(f"Covered this session: {', '.join(taught[:6])}"
-                       + (" +more" if len(taught) > 6 else ""))
+            st.caption(f"Covered: {', '.join(taught[:5])}"
+                       + (" +more" if len(taught) > 5 else ""))
+
+    # ── Learning path panel (Mentor Mode active) ────────────────────────────────
+    ms = st.session_state.mentor_state
+    if ms.get("active") and ms.get("steps"):
+        steps       = ms["steps"]
+        current_idx = ms.get("current_step", 0)
+        step_status = ms.get("step_status", [])
+        total       = len(steps)
+        done        = sum(1 for s in step_status if s in ("passed", "skipped"))
+        pct         = int(done / total * 100) if total else 0
+
+        st.markdown('<div class="section-header">📚 Learning Path</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-size:0.72rem;color:#64748B;margin-bottom:0.4rem;">'
+            f'{ms.get("topic", "")} &nbsp;·&nbsp; Step {current_idx+1}/{total}</div>',
+            unsafe_allow_html=True,
+        )
+        st.progress(pct / 100)
+
+        step_icons = {
+            "passed":      "✅",
+            "in_progress": "▶️",
+            "skipped":     "⏭️",
+            "pending":     "○",
+        }
+        path_html = ""
+        for i, step in enumerate(steps):
+            status = step_status[i] if i < len(step_status) else "pending"
+            icon   = step_icons.get(status, "○")
+            color  = "#A78BFA" if status == "in_progress" else (
+                     "#4ADE80" if status == "passed" else "#64748B")
+            weight = "600" if status == "in_progress" else "400"
+            path_html += (
+                f'<div style="font-size:0.72rem;color:{color};font-weight:{weight};'
+                f'padding:0.18rem 0;">{icon} {step["concept"]}</div>'
+            )
+        st.markdown(path_html, unsafe_allow_html=True)
 
 
     # ── PDF Upload ─────────────────────────────────────────────────────────────
@@ -566,13 +605,16 @@ else:
                 answer  = data.get("answer", "No answer returned.")
                 sources = data.get("sources", [])
                 prereqs = data.get("prerequisites_taught", [])
+                ms_new  = data.get("mentor_state", {})
 
-                # Update learner profile in sidebar
+                # Update session state
                 lp = data.get("learner_profile", {})
                 if lp:
                     st.session_state.learner_profile = lp
+                if ms_new:
+                    st.session_state.mentor_state = ms_new
 
-                # Show prereq pills if concepts were taught first
+                # Show prereq pills
                 if prereqs:
                     pills = "".join(
                         f'<span class="prereq-pill">✓ {p}</span>' for p in prereqs
@@ -581,6 +623,16 @@ else:
                         f'<div style="margin-bottom:0.5rem;">'
                         f'<span style="font-size:0.68rem;color:#64748B;">Prerequisites covered first: </span>'
                         f'{pills}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                # Show Mentor Mode step badge
+                if ms_new.get("active"):
+                    step_n = ms_new.get("current_step", 0) + 1
+                    total  = len(ms_new.get("steps", []))
+                    st.markdown(
+                        f'<div style="font-size:0.68rem;color:#A78BFA;margin-bottom:0.4rem;">'
+                        f'▶ Step {step_n} of {total}: {ms_new.get("steps", [{}])[ms_new.get("current_step", 0)].get("concept","") if ms_new.get("steps") else ""}</div>',
                         unsafe_allow_html=True,
                     )
 
@@ -600,13 +652,45 @@ else:
                             )
                             st.caption(src.get("preview", ""))
 
-        # Save to session (include prereqs so history can render them)
+        # Save to session
         st.session_state.messages.append({
             "role":    "assistant",
             "content": answer,
             "sources": sources,
             "prereqs": prereqs if not err else [],
         })
+
+    # ── Continue button (Mentor Mode) ──────────────────────────────────────────
+    ms = st.session_state.mentor_state
+    if ms.get("active") and st.session_state.messages:
+        steps       = ms.get("steps", [])
+        current_idx = ms.get("current_step", 0)
+        next_idx    = current_idx + 1
+        if next_idx < len(steps):
+            next_concept = steps[next_idx].get("concept", "next concept")
+            if st.button(
+                f"▶ Continue to Step {next_idx + 1}: {next_concept}",
+                use_container_width=True,
+                type="primary",
+                key="mentor_continue",
+            ):
+                st.session_state.messages.append({
+                    "role": "user", "content": f"Continue to step {next_idx + 1}", "sources": []
+                })
+                data, err = send_chat("__CONTINUE__")
+                if not err:
+                    answer = data.get("answer", "")
+                    ms_new = data.get("mentor_state", {})
+                    lp     = data.get("learner_profile", {})
+                    if ms_new:
+                        st.session_state.mentor_state = ms_new
+                    if lp:
+                        st.session_state.learner_profile = lp
+                    st.session_state.messages.append({
+                        "role": "assistant", "content": answer,
+                        "sources": data.get("sources", []), "prereqs": [],
+                    })
+                st.rerun()
 
     # ── Suggested questions (shown when just uploaded, no turns yet) ───────────
     if not st.session_state.messages:
@@ -617,7 +701,7 @@ else:
             unsafe_allow_html=True,
         )
         suggestions = [
-            "What is this paper about? Explain it to a complete beginner.",
+            "I want to learn and understand the key ideas in this paper from scratch.",
             "What problem does this paper solve, and why was it hard?",
             "Walk me through the key equations in this paper.",
             "What are the main results and why are they significant?",
@@ -625,6 +709,6 @@ else:
         cols = st.columns(2)
         for i, q in enumerate(suggestions):
             if cols[i % 2].button(q, use_container_width=True, key=f"sug_{i}"):
-                # Inject as a chat input
                 st.session_state.messages.append({"role": "user", "content": q, "sources": []})
                 st.rerun()
+

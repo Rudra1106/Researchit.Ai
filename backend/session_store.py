@@ -57,6 +57,16 @@ class SessionStore:
                 "profiled":            False,
             },
             "reading_path":   [],
+            "mentor_mode": {
+                "active":                  False,
+                "topic":                   "",
+                "tagline":                 "",
+                "steps":                   [],
+                "current_step":            0,      # 0-indexed
+                "step_status":             [],     # "pending"|"in_progress"|"passed"|"skipped"
+                "awaiting_check_answer":   False,
+                "check_question":          "",
+            },
         }
         return session_id
 
@@ -146,3 +156,73 @@ class SessionStore:
     def get_reading_path(self, session_id: str) -> list:
         session = self._sessions.get(session_id)
         return session.get("reading_path", []) if session else []
+
+    # ── Mentor Mode ─────────────────────────────────────────────────────────────────
+
+    def get_mentor_state(self, session_id: str) -> dict:
+        session = self._sessions.get(session_id)
+        if not session:
+            return {"active": False}
+        return session.get("mentor_mode", {"active": False})
+
+    def activate_mentor_mode(self, session_id: str, curriculum: dict):
+        """Enter Mentor Mode with the generated curriculum."""
+        if not self.session_exists(session_id):
+            return
+        steps  = curriculum.get("steps", [])
+        mentor = self._sessions[session_id]["mentor_mode"]
+        mentor["active"]              = True
+        mentor["topic"]               = curriculum.get("topic", "")
+        mentor["tagline"]             = curriculum.get("tagline", "")
+        mentor["steps"]               = steps
+        mentor["current_step"]        = 0
+        mentor["step_status"]         = ["in_progress"] + ["pending"] * (len(steps) - 1)
+        mentor["awaiting_check_answer"] = False
+        mentor["check_question"]      = ""
+
+    def advance_step(self, session_id: str) -> bool:
+        """
+        Advance to the next curriculum step.
+        Returns True if there is a next step, False if curriculum is complete.
+        """
+        if not self.session_exists(session_id):
+            return False
+        mentor = self._sessions[session_id]["mentor_mode"]
+        idx    = mentor["current_step"]
+        steps  = mentor["steps"]
+
+        # Mark current step done (if not already passed)
+        if idx < len(mentor["step_status"]) and mentor["step_status"][idx] != "passed":
+            mentor["step_status"][idx] = "skipped"
+
+        if idx + 1 >= len(steps):
+            mentor["active"] = False   # curriculum complete
+            return False
+
+        mentor["current_step"] = idx + 1
+        mentor["step_status"][idx + 1] = "in_progress"
+        mentor["awaiting_check_answer"] = False
+        mentor["check_question"]        = ""
+        return True
+
+    def mark_step_passed(self, session_id: str):
+        """Mark the current step as passed (student answered correctly)."""
+        if not self.session_exists(session_id):
+            return
+        mentor = self._sessions[session_id]["mentor_mode"]
+        idx    = mentor["current_step"]
+        if idx < len(mentor["step_status"]):
+            mentor["step_status"][idx] = "passed"
+
+    def set_awaiting_check(self, session_id: str, check_question: str):
+        """Record that the mentor asked a Socratic check question."""
+        if not self.session_exists(session_id):
+            return
+        mentor = self._sessions[session_id]["mentor_mode"]
+        mentor["awaiting_check_answer"] = bool(check_question)
+        mentor["check_question"]        = check_question
+
+    def deactivate_mentor_mode(self, session_id: str):
+        """Exit Mentor Mode (curriculum complete or user requested)."""
+        if self.session_exists(session_id):
+            self._sessions[session_id]["mentor_mode"]["active"] = False
